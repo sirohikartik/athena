@@ -16,15 +16,14 @@ def ask(prompt: str, model: str = "llama3:1b", stream: bool = True):
             stream=True
         )
 
-        full_response = ""
 
         for chunk in stream_resp:
             token = chunk["message"]["content"]
             print(token, end="", flush=True)
-            full_response += token
+
 
         print()
-        return full_response
+        return "-"*100
 
     except Exception as e:
         return f"Error: {e}"
