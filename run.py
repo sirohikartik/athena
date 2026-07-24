@@ -11,11 +11,9 @@ from rich.markdown import Markdown
 
 console = Console()
 
-
 import os
 os.environ["TRANSFORMERS_VERBOSITY"] = "error"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
 
 HISTORY_DIR = "History"
 HISTORY_FILE = os.path.join(HISTORY_DIR, "history.json")
@@ -41,54 +39,97 @@ def save_history():
         pass
 
 
-def generate_search_queries(user_query: str, model_name: str = "gpt-oss:20b-cloud") -> list[str]:
+def analyze_query(user_query: str, model_name: str = "gpt-oss:20b-cloud") -> dict:
+    """
+    Analyzes the query to determine the type of result expected.
+    """
     prompt = (
-        f"You are an expert search query generator. Given the user's question, "
-        f"break it down into 3-5 diverse and effective search queries to retrieve the most comprehensive information. "
-        f"Return the result strictly as a JSON object with a key 'queries' containing a list of strings.\n\n"
-        f"Question: {user_query}\n\n"
-        f"JSON Response:"
+        f"Analyze the following user query:\n"
+        f"Query: {user_query}\n\n"
+        f"Return a JSON object with:\n"
+        f"- type: 'structured' if the user wants a list of entities, people, products, or specific attributes; 'general' for a factual or conceptual answer.\n"
+        f"- focus: the core subject of the query.\n"
+        f"- requirements: a list of specific details the user explicitly asked for (e.g., ['email', 'price', 'date']).\n"
+        f"Return ONLY the JSON object."
     )
     try:
         response = model.ask(prompt, model_name)
-        # Simple JSON extraction from response
+        start_idx = response.find('{')
+        end_idx = response.rfind('}') + 1
+        if start_idx != -1 and end_idx != 0:
+            return json.loads(response[start_idx:end_idx])
+    except Exception as e:
+        console.print(f"[yellow]Query analysis failed: {e}[/yellow]")
+    return {"type": "general", "focus": user_query, "requirements": []}
+
+
+def generate_diversified_queries(user_query: str, analysis: dict, model_name: str = "gpt-oss:20b-cloud") -> list[str]:
+    """
+    Generates diverse search queries based on whether the intent is structured or general.
+    """
+    q_type = analysis.get("type", "general")
+    focus = analysis.get("focus", user_query)
+    reqs = analysis.get("requirements", [])
+
+    if q_type == "structured":
+        prompt = (
+            f"The user wants a structured list of entities related to '{focus}'. "
+            f"They specifically need: {', '.join(reqs)}.\n"
+            f"Generate 5 highly targeted search queries to find these details. "
+            f"Mix general terms with specific attribute-seeking terms (e.g., ' la email', ' la portfolio', ' la price').\n"
+            f"Return ONLY JSON: {{\"queries\": [\"q1\", \"q2\", ...]}}"
+        )
+    else:
+        prompt = (
+            f"The user wants a general answer about '{focus}'.\n"
+            f"Generate 5 diverse search queries to cover this topic from multiple angles "
+            f"(e.g., definition, current status, pros/cons, expert opinions).\n"
+            f"Return ONLY JSON: {{\"queries\": [\"q1\", \"q2\", ...]}}"
+        )
+    try:
+        response = model.ask(prompt, model_name)
         start_idx = response.find('{')
         end_idx = response.rfind('}') + 1
         if start_idx != -1 and end_idx != 0:
             data = json.loads(response[start_idx:end_idx])
             return data.get('queries', [user_query])
     except Exception as e:
-        console.print(f"[yellow]Query generation failed: {e}. Using original query.[/yellow]")
-    
+        console.print(f"[yellow]Query generation failed: {e}[/yellow]")
     return [user_query]
 
 
-def reason_about_search(user_query: str, current_context: str, iteration: int, model_name: str = "gpt-oss:20b-cloud") -> tuple[bool, list[str]]:
+def reason_about_search(user_query: str, current_context: str, iteration: int, analysis: dict, model_name: str = "gpt-oss:20b-cloud") -> tuple[bool, list[str]]:
+    """
+    General purpose reasoning to decide if we need more information to satisfy the user's request.
+    """
     prompt = (
-        f"You are a research coordinator. Your goal is to determine if the provided context is sufficient to answer the user's question accurately.\n\n"
-        f"Question: {user_query}\n\n"
-        f"Context found so far:\n{current_context if current_context else 'No information gathered yet.'}\n\n"
+        f"You are an information retrieval expert. Determine if the current context is sufficient to answer the user's request.\n\n"
+        f"User Request: {user_query}\n"
+        f"Expected Type: {analysis.get('type')} (Focus: {analysis.get('focus')})\n"
+        f"Context gathered so far:\n{current_context[:2000] if current_context else 'Nothing yet.'}\n\n"
         f"Instruction:\n"
-        f"1. If the context is sufficient to provide a complete and accurate answer, respond with exactly one word: 'DONE'.\n"
-        f"2. If more information is needed, identify the missing pieces and generate 2-4 targeted search queries to fill those gaps. "
-        f"Return the result strictly as a JSON object with a key 'queries' containing a list of strings.\n\n"
-        f"Current iteration: {iteration}/4\n\n"
+        f"1. If the answer is fully and accurately supported by the context, respond with 'DONE'.\n"
+        f"2. If information is missing or contradictory, identify the gap and provide 2-3 search queries to fill it.\n"
+        f"Return JSON if more info is needed: {{\"queries\": [\"q1\", \"q2\"]}}\n"
+        f"Iteration: {iteration}/4\n"
         f"Response:"
     )
     try:
-        response = model.ask(prompt, model_name)
-        if "DONE" in response.upper():
+        response = model.ask(prompt, model_name).strip()
+        if response.upper().startswith("DONE") or (response.count('\n') == 0 and "DONE" in response.upper()):
             return True, []
         
         start_idx = response.find('{')
         end_idx = response.rfind('}') + 1
         if start_idx != -1 and end_idx != 0:
             data = json.loads(response[start_idx:end_idx])
-            return False, data.get('queries', [])
+            queries = data.get('queries', [])
+            if queries:
+                return False, queries
     except Exception as e:
-        console.print(f"[yellow]Reasoning failed: {e}. Proceeding to finish.[/yellow]")
+        console.print(f"[yellow]Reasoning failed: {e}[/yellow]")
     
-    return True, []
+    return (iteration >= 4), []
 
 
 def tokenize(text):
@@ -104,7 +145,6 @@ def build_bm25_index(texts):
 def retrieve_bm25(query, bm25, tokenized_corpus, texts, k=3):
     tokenized_query = tokenize(query)
     scores = bm25.get_scores(tokenized_query)
-    # get top k indices
     top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:k]
     return [texts[i] for i in top_indices]
 
@@ -112,7 +152,6 @@ def retrieve_bm25(query, bm25, tokenized_corpus, texts, k=3):
 def chunk_text(text, chunk_size=300):
     if not isinstance(text, str) or not text.strip():
         return []
-
     words = text.split()
     return [
         " ".join(words[i:i+chunk_size])
@@ -127,55 +166,90 @@ async def main():
     if not user_query:
         return
 
-
     history.append({
         "timestamp": str(datetime.now()),
         "query": user_query
     })
 
-    console.print("[cyan]Analyzing query and generating search terms...[/cyan]")
+    # Step 0: Analyze query intent (General vs Structured)
+    console.print("[cyan]Analyzing query...[/cyan]")
+    analysis = await asyncio.to_thread(analyze_query, user_query)
+    console.print(f"[dim]Intent: {analysis['type']} | Focus: {analysis['focus']}[/dim]")
+
+    # Step 1: Initial set of diverse queries
+    current_queries = await asyncio.to_thread(generate_diversified_queries, user_query, analysis)
     
-    # Generate multiple search queries
-    search_queries = await asyncio.to_thread(generate_search_queries, user_query)
-    console.print(f"[dim]Queries: {', '.join(search_queries)}[/dim]")
-
-    console.print("[cyan]Searching...[/cyan]")
-
-    # Perform searches in parallel
-    tasks = [search_query.find(q) for q in search_queries]
-    results = await asyncio.gather(*tasks)
-
     all_chunks = []
     all_urls = []
-    
-    for context, urls in results:
-        if context:
-            for doc in context:
-                all_chunks.extend(chunk_text(doc))
-            all_urls.extend(urls)
+    current_context = ""
+
+    for iteration in range(1, 5):
+        console.print(f"[cyan]Reasoning Loop Iteration {iteration}/4...[/cyan]")
+
+        if iteration > 1:
+            is_done, new_queries = await asyncio.to_thread(
+                reason_about_search, user_query, current_context, iteration, analysis
+            )
+            if is_done:
+                console.print("[green]Sufficient information gathered.[/green]")
+                break
+            current_queries = new_queries
+
+        console.print(f"[dim]Searching for: {current_queries}[/dim]")
+        console.print("[cyan]Searching...[/cyan]")
+
+        tasks = [search_query.find(q) for q in current_queries]
+        results = await asyncio.gather(*tasks)
+
+        for context, urls in results:
+            if context:
+                for doc in context:
+                    all_chunks.extend(chunk_text(doc))
+                all_urls.extend(urls)
+
+        if not all_chunks:
+            console.print("[yellow]No content found in this pass...[/yellow]")
+            if iteration == 1:
+                # Fallback to raw query if the agent's first queries failed
+                current_queries = [user_query]
+            else:
+                continue
+
+        # Update BM25 index and retrieve for the reasoning loop
+        bm25, tokenized_corpus, texts = await asyncio.to_thread(build_bm25_index, all_chunks)
+        relevant = await asyncio.to_thread(retrieve_bm25, user_query, bm25, tokenized_corpus, texts, 5)
+        current_context = "\n\n".join(relevant)
 
     if not all_chunks:
-        console.print("[red]No usable content extracted[/red]")
+        console.print("[red]No usable content extracted after multiple attempts[/red]")
         return
 
-    # Build BM25 index
+    # Final Retrieval
     bm25, tokenized_corpus, texts = await asyncio.to_thread(build_bm25_index, all_chunks)
-
-    # Retrieve most relevant chunks using the ORIGINAL user query
-    relevant = await asyncio.to_thread(retrieve_bm25, user_query, bm25, tokenized_corpus, texts, 5)
-
+    relevant = await asyncio.to_thread(retrieve_bm25, user_query, bm25, tokenized_corpus, texts, 7)
     final_context = "\n\n".join(relevant)
+
+    # Tailor the agent prompt based on the intent
+    if analysis['type'] == 'structured':
+        reqs = ", ".join(analysis['requirements']) if analysis['requirements'] else "all available details"
+        agent_prompt = (
+            f"The user is looking for a structured list of results related to '{analysis['focus']}'.\n"
+            f"Please provide the results and ensure you include these details for each: {reqs}.\n"
+            f"If a detail is missing from the context, mark it as 'Not found'. Do not guess.\n\n"
+            f"Context:\n{final_context}\n\n"
+            f"Question: {user_query}"
+        )
+    else:
+        agent_prompt = (
+            f"Answer the following question based on the provided context. "
+            f"Be precise, objective, and well-structured.\n\n"
+            f"Context:\n{final_context}\n\n"
+            f"Question: {user_query}"
+        )
+
     console.print("\n[bold green]Athena:[/bold green]")
-
-    response = await asyncio.to_thread(
-        agent,
-        final_context + "\n\nQuestion: " + user_query,
-        "gpt-oss:20b-cloud"
-    )
-
-
+    response = await asyncio.to_thread(agent, agent_prompt, "gpt-oss:20b-cloud")
     console.print(Markdown(response))
-
 
     console.print("\n[bold yellow]Sources:[/bold yellow]")
     seen = set()
@@ -189,7 +263,6 @@ async def main():
 
 if __name__ == "__main__":
     load_history()
-
     try:
         while True:
             asyncio.run(main())
