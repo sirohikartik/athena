@@ -27,7 +27,12 @@ Athena is an open-source search agent that combines web search, intelligent scra
    ollama pull gpt-oss:20b-cloud
    ```
 
-4. Ensure Ollama is running:
+4. Create a `.env` file to specify the model you want to use:
+   ```bash
+   echo "MODEL_NAME=gpt-oss:20b-cloud" > .env
+   ```
+
+5. Ensure Ollama is running:
    ```bash
    ollama serve
    ```
@@ -92,7 +97,7 @@ Quantum computing has seen significant advances in 2024, including...
 ### Retrieval & Generation
 7. The original user query is used to retrieve the top 5 most relevant text chunks from the BM25 index
 8. Context + question + system prompt are formatted for the LLM
-9. Ollama generates a response using `gpt-oss:20b-cloud`
+9. Ollama generates a response using the model specified in `.env`
 10. Response is streamed back to the user in real-time
 11. Sources are deduplicated and displayed (top 5 unique URLs)
 
@@ -103,14 +108,15 @@ Quantum computing has seen significant advances in 2024, including...
 ## Configuration
 
 ### Model Selection
-To change the LLM model, modify:
-- In `agent.py`: Change the `model_name` default in `agent()`
-- In `run.py`: Change the `model_name` default in `generate_search_queries()` and the `agent()` call in `main()`
+To change the LLM model, simply update the `MODEL_NAME` value in the `.env` file:
+```env
+MODEL_NAME=your-model-name
+```
 
 ### Search Parameters
 Adjust these values in the code:
 - `max_results` in `seeker/search.py` (default: 10)
-- `k` in `run.py` retrieve_bm25 function (default: 5 chunks)
+- `k` in `run.py` retrieve_bm25 function (default: 10 chunks)
 - `chunk_size` in `run.py` (default: 300 words)
 
 ### Timeouts & Limits

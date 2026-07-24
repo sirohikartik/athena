@@ -1,6 +1,11 @@
 import ollama
+from dotenv import load_dotenv
+import os
 
-def ask(prompt: str, model: str = "gpt-oss:20b-cloud", stream: bool = True):
+load_dotenv()
+DEFAULT_MODEL = os.getenv("MODEL_NAME", "gpt-oss:20b-cloud")
+
+def ask(prompt: str, model: str = DEFAULT_MODEL, stream: bool = True):
     try:
         if not stream:
             response = ollama.chat(

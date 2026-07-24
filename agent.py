@@ -18,7 +18,7 @@ Rules:
 """
 
 
-def agent(context: str, question: str, history: str = "", model_name: str = "gpt-oss:20b-cloud") -> str:
+def agent(context: str, question: str, history: str = "", model_name: str = model.DEFAULT_MODEL) -> str:
     history_block = f"HISTORY:\n{history.strip()}\n\n" if history.strip() else ""
 
     prompt = (

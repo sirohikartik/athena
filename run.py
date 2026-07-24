@@ -39,7 +39,7 @@ def save_history():
         pass
 
 
-def analyze_query(user_query: str, model_name: str = "gpt-oss:20b-cloud") -> dict:
+def analyze_query(user_query: str, model_name: str = model.DEFAULT_MODEL) -> dict:
     """
     Analyzes the query to determine the type of result expected.
     """
@@ -63,7 +63,7 @@ def analyze_query(user_query: str, model_name: str = "gpt-oss:20b-cloud") -> dic
     return {"type": "general", "focus": user_query, "requirements": []}
 
 
-def generate_diversified_queries(user_query: str, analysis: dict, model_name: str = "gpt-oss:20b-cloud") -> list[str]:
+def generate_diversified_queries(user_query: str, analysis: dict, model_name: str = model.DEFAULT_MODEL) -> list[str]:
     """
     Generates diverse search queries based on whether the intent is structured or general.
     """
@@ -98,7 +98,7 @@ def generate_diversified_queries(user_query: str, analysis: dict, model_name: st
     return [user_query]
 
 
-def reason_about_search(user_query: str, current_context: str, iteration: int, analysis: dict, model_name: str = "gpt-oss:20b-cloud") -> tuple[bool, list[str]]:
+def reason_about_search(user_query: str, current_context: str, iteration: int, analysis: dict, model_name: str = model.DEFAULT_MODEL) -> tuple[bool, list[str]]:
     """
     General purpose reasoning to decide if we need more information to satisfy the user's request.
     """
@@ -217,7 +217,7 @@ async def main():
 
         # Update BM25 index and retrieve for the reasoning loop
         bm25, tokenized_corpus, texts = await asyncio.to_thread(build_bm25_index, all_chunks)
-        relevant = await asyncio.to_thread(retrieve_bm25, user_query, bm25, tokenized_corpus, texts, 5)
+        relevant = await asyncio.to_thread(retrieve_bm25, user_query, bm25, tokenized_corpus, texts, 10)
         current_context = "\n\n".join(relevant)
 
     if not all_chunks:
@@ -226,7 +226,7 @@ async def main():
 
     # Final Retrieval
     bm25, tokenized_corpus, texts = await asyncio.to_thread(build_bm25_index, all_chunks)
-    relevant = await asyncio.to_thread(retrieve_bm25, user_query, bm25, tokenized_corpus, texts, 7)
+    relevant = await asyncio.to_thread(retrieve_bm25, user_query, bm25, tokenized_corpus, texts, 10)
     final_context = "\n\n".join(relevant)
 
     # Tailor the agent prompt based on the intent
@@ -248,7 +248,7 @@ async def main():
         )
 
     console.print("\n[bold green]Athena:[/bold green]")
-    response = await asyncio.to_thread(agent, agent_prompt, "gpt-oss:20b-cloud")
+    response = await asyncio.to_thread(agent, agent_prompt, model.DEFAULT_MODEL)
     console.print(Markdown(response))
 
     console.print("\n[bold yellow]Sources:[/bold yellow]")
