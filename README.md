@@ -1,4 +1,4 @@
-Athena is an open-source search agent that combines web search, intelligent scraping, semantic retrieval, and local LLM reasoning to answer user questions with up-to-date information from the web. Unlike traditional search engines that return lists of links, Athena reads and understands web content to provide direct, well-sourced answers to your questions.
+Athena is an open-source search agent that combines web search, intelligent scraping, BM25 retrieval, and local LLM reasoning to answer user questions with up-to-date information from the web. Unlike traditional search engines that return lists of links, Athena reads and understands web content to provide direct, well-sourced answers to your questions.
 
 
 ## Installation
@@ -7,7 +7,7 @@ Athena is an open-source search agent that combines web search, intelligent scra
 
 - Python 3.8+
 - [Ollama](https://ollama.ai/) installed and running
-- At least one LLM model pulled (e.g., `gemma3:1b` or `llama3:1b`)
+- At least one LLM model pulled (e.g., `gpt-oss:20b-cloud`)
 
 ### Setup
 
@@ -24,9 +24,7 @@ Athena is an open-source search agent that combines web search, intelligent scra
 
 3. Pull an LLM model using Ollama:
    ```bash
-   ollama pull gemma3:1b
-   # or
-   ollama pull llama3:1b
+   ollama pull gpt-oss:20b-cloud
    ```
 
 4. Ensure Ollama is running:
@@ -41,19 +39,15 @@ Run the application:
 python run.py
 ```
 
-You'll see:
-```
-Initializing sentencepiece...
-Ask Athena: 
-```
-
 Enter your question when prompted. Athena will:
-1. Search DuckDuckGo for relevant results
-2. Scrape and extract content from the top pages
-3. Find the most relevant information using semantic search
-4. Generate an answer using the local LLM
-5. Display the response with source attribution
-6. Save the query to history
+1. Use an LLM to break your query into 3-5 diverse search terms
+2. Search DuckDuckGo for all queries in parallel
+3. Scrape and extract content from the top pages
+4. Index all content using a BM25 corpus
+5. Retrieve the most relevant information based on your original query
+6. Generate an answer using the local LLM
+7. Display the response with source attribution
+8. Save the query to history
 
 To exit, press `Ctrl+C`. Your conversation history will be saved automatically.
 
@@ -62,6 +56,8 @@ To exit, press `Ctrl+C`. Your conversation history will be saved automatically.
 ```
 Ask Athena: What are the latest developments in quantum computing 2024?
 
+[cyan]Analyzing query and generating search terms...[/cyan]
+[dim]Queries: quantum computing breakthroughs 2024, latest quantum processor news, etc...[/dim]
 [cyan]Searching...[/cyan]
 
 [bold green]Athena:[/bold green]
@@ -77,8 +73,8 @@ Quantum computing has seen significant advances in 2024, including...
 ## How It Works
 
 ### Search Phase
-1. Uses DuckDuckGo (`ddgs` library) to search for the user query
-2. Returns top results with URLs, titles, and snippets
+1. **Query Expansion**: An LLM agent analyzes the user query and generates 3-5 specialized search queries to ensure comprehensive coverage.
+2. **Parallel Search**: All generated queries are processed concurrently using `asyncio`, retrieving results from DuckDuckGo.
 
 ### Scraping Phase
 2. For each URL:
@@ -91,40 +87,37 @@ Quantum computing has seen significant advances in 2024, including...
 ### Content Processing
 3. HTML content is converted to clean text using Trafilatura
 4. Text is split into overlapping chunks (300 words each)
-5. Sentence-transformers (`all-MiniLM-L6-v2`) creates embeddings for all chunks
-6. FAISS index is built for efficient similarity search
+5. A BM25 (Best Matching 25) index is built from all retrieved chunks, providing efficient keyword-based retrieval without the need for heavy embedding models.
 
 ### Retrieval & Generation
-7. The user query is embedded and used to search the FAISS index
-8. Top 3 most relevant text chunks are retrieved as context
-9. Context + question + system prompt are formatted for the LLM
-10. Ollama generates a response using the specified model
-11. Response is streamed back to the user in real-time
-12. Sources are deduplicated and displayed (top 5 unique URLs)
+7. The original user query is used to retrieve the top 5 most relevant text chunks from the BM25 index
+8. Context + question + system prompt are formatted for the LLM
+9. Ollama generates a response using `gpt-oss:20b-cloud`
+10. Response is streamed back to the user in real-time
+11. Sources are deduplicated and displayed (top 5 unique URLs)
 
 ### Conversation History
 - Each query and timestamp is stored in `History/history.json`
 - History is loaded on startup and saved on exit
-- Currently, history is not used in the LLM prompt but is available for future enhancement
 
 ## Configuration
 
 ### Model Selection
-To change the LLM model, modify these files:
-- In `agent.py`: Change the `model_name` parameter in the `agent()` function call
-- In `run.py`: Change the model name in the `agent()` call (currently "gemma3:1b")
+To change the LLM model, modify:
+- In `agent.py`: Change the `model_name` default in `agent()`
+- In `run.py`: Change the `model_name` default in `generate_search_queries()` and the `agent()` call in `main()`
 
 ### Search Parameters
 Adjust these values in the code:
 - `max_results` in `seeker/search.py` (default: 10)
-- `k` in `run.py` retrieve function (default: 3 chunks)
+- `k` in `run.py` retrieve_bm25 function (default: 5 chunks)
 - `chunk_size` in `run.py` (default: 300 words)
 
 ### Timeouts & Limits
 - Static scrape timeout: 8 seconds
 - Dynamic scrape timeout: 15 seconds
 - Global concurrency limit: 10 URLs
-- Dynamic concurrency limit: 2 URLs (to reduce strain on Selenium)
+- Dynamic concurrency limit: 2 URLs
 
 ## Dependencies
 
@@ -132,11 +125,9 @@ Key dependencies include:
 - `ddgs`: DuckDuckGo search
 - `requests` & `selenium`: Web scraping
 - `trafilatura`: HTML-to-text conversion
-- `sentence-transformers` & `torch`: Text embeddings
-- `faiss-cpu`: Vector similarity search
+- `rank-bm25`: Probabilistic information retrieval
 - `ollama`: LLM interface
 - `rich`: Beautiful terminal output
-- `numpy`: Numerical operations
 
 See `requirements.txt` for the complete list.
 
@@ -150,12 +141,6 @@ Adjust `scrapion/scrape.py` to:
 - Add more headers or cookies
 - Implement different waiting strategies for dynamic content
 - Add proxy support
-
-### Using Different Embedding Models
-Change the model in `run.py`:
-```python
-embed_model = SentenceTransformer("your-model-name")
-```
 
 ### Switching LLM Providers
 Modify `utils/model.py` to work with different LLM APIs (OpenAI, Anthropic, etc.) while keeping the same interface.
@@ -191,10 +176,6 @@ Athena is designed for privacy:
    - Ensure Chrome/Chromium is installed
    - Try updating selenium and webdriver-manager
 
-5. **CUDA/GPU issues with sentence-transformers**
-   - The package uses CPU by default
-   - For GPU support, install appropriate PyTorch with CUDA
-
 ## License
 
 This project is open source and available under the MIT License.
@@ -202,8 +183,7 @@ This project is open source and available under the MIT License.
 ## Acknowledgments
 
 - Built with [Ollama](https://ollama.ai/) for local LLM inference
-- Uses [sentence-transformers](https://www.sbert.net/) for embeddings
-- Powered by [FAISS](https://github.com/facebookresearch/faiss) for vector search
+- Retrieval powered by [rank-bm25](https://github.com/dorianpatras/rank_bm25)
 - Scraping powered by [requests](https://requests.readthedocs.io/) and [Selenium](https://www.selenium.dev/)
 - Content extraction via [trafilatura](https://github.com/adbar/trafilatura)
 - Search via [DuckDuckGo Instant Answer API](https://duckduckgo.com/html/)

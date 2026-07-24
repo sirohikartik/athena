@@ -1,6 +1,6 @@
 import ollama
 
-def ask(prompt: str, model: str = "llama3:1b", stream: bool = True):
+def ask(prompt: str, model: str = "gpt-oss:20b-cloud", stream: bool = True):
     try:
         if not stream:
             response = ollama.chat(
