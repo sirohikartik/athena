@@ -162,110 +162,110 @@ def chunk_text(text, chunk_size=300):
 async def main():
     global history
 
-    user_query = input("\nAsk Athena: ").strip()
-    if not user_query:
-        return
+    while True:
+        user_query = input("\nAsk Athena: ").strip()
+        if not user_query:
+            continue
 
-    history.append({
-        "timestamp": str(datetime.now()),
-        "query": user_query
-    })
+        history.append({
+            "timestamp": str(datetime.now()),
+            "query": user_query
+        })
 
-    # Step 0: Analyze query intent (General vs Structured)
-    console.print("[cyan]Analyzing query...[/cyan]")
-    analysis = await asyncio.to_thread(analyze_query, user_query)
-    console.print(f"[dim]Intent: {analysis['type']} | Focus: {analysis['focus']}[/dim]")
+        # Step 0: Analyze query intent (General vs Structured)
+        console.print("[cyan]Analyzing query...[/cyan]")
+        analysis = await asyncio.to_thread(analyze_query, user_query)
+        console.print(f"[dim]Intent: {analysis['type']} | Focus: {analysis['focus']}[/dim]")
 
-    # Step 1: Initial set of diverse queries
-    current_queries = await asyncio.to_thread(generate_diversified_queries, user_query, analysis)
-    
-    all_chunks = []
-    all_urls = []
-    current_context = ""
+        # Step 1: Initial set of diverse queries
+        current_queries = await asyncio.to_thread(generate_diversified_queries, user_query, analysis)
+        
+        all_chunks = []
+        all_urls = []
+        current_context = ""
 
-    for iteration in range(1, 5):
-        console.print(f"[cyan]Reasoning Loop Iteration {iteration}/4...[/cyan]")
+        for iteration in range(1, 5):
+            console.print(f"[cyan]Reasoning Loop Iteration {iteration}/4...[/cyan]")
 
-        if iteration > 1:
-            is_done, new_queries = await asyncio.to_thread(
-                reason_about_search, user_query, current_context, iteration, analysis
-            )
-            if is_done:
-                console.print("[green]Sufficient information gathered.[/green]")
-                break
-            current_queries = new_queries
+            if iteration > 1:
+                is_done, new_queries = await asyncio.to_thread(
+                    reason_about_search, user_query, current_context, iteration, analysis
+                )
+                if is_done:
+                    console.print("[green]Sufficient information gathered.[/green]")
+                    break
+                current_queries = new_queries
 
-        console.print(f"[dim]Searching for: {current_queries}[/dim]")
-        console.print("[cyan]Searching...[/cyan]")
+            console.print(f"[dim]Searching for: {current_queries}[/dim]")
+            console.print("[cyan]Searching...[/cyan]")
 
-        tasks = [search_query.find(q) for q in current_queries]
-        results = await asyncio.gather(*tasks)
+            tasks = [search_query.find(q) for q in current_queries]
+            results = await asyncio.gather(*tasks)
 
-        for context, urls in results:
-            if context:
-                for doc in context:
-                    all_chunks.extend(chunk_text(doc))
-                all_urls.extend(urls)
+            for context, urls in results:
+                if context:
+                    for doc in context:
+                        all_chunks.extend(chunk_text(doc))
+                    all_urls.extend(urls)
+
+            if not all_chunks:
+                console.print("[yellow]No content found in this pass...[/yellow]")
+                if iteration == 1:
+                    # Fallback to raw query if the agent's first queries failed
+                    current_queries = [user_query]
+                else:
+                    continue
+
+            # Update BM25 index and retrieve for the reasoning loop
+            bm25, tokenized_corpus, texts = await asyncio.to_thread(build_bm25_index, all_chunks)
+            relevant = await asyncio.to_thread(retrieve_bm25, user_query, bm25, tokenized_corpus, texts, 10)
+            current_context = "\n\n".join(relevant)
 
         if not all_chunks:
-            console.print("[yellow]No content found in this pass...[/yellow]")
-            if iteration == 1:
-                # Fallback to raw query if the agent's first queries failed
-                current_queries = [user_query]
-            else:
-                continue
+            console.print("[red]No usable content extracted after multiple attempts[/red]")
+            continue
 
-        # Update BM25 index and retrieve for the reasoning loop
+        # Final Retrieval
         bm25, tokenized_corpus, texts = await asyncio.to_thread(build_bm25_index, all_chunks)
         relevant = await asyncio.to_thread(retrieve_bm25, user_query, bm25, tokenized_corpus, texts, 10)
-        current_context = "\n\n".join(relevant)
+        final_context = "\n\n".join(relevant)
 
-    if not all_chunks:
-        console.print("[red]No usable content extracted after multiple attempts[/red]")
-        return
+        # Tailor the agent prompt based on the intent
+        if analysis['type'] == 'structured':
+            reqs = ", ".join(analysis['requirements']) if analysis['requirements'] else "all available details"
+            agent_prompt = (
+                f"The user is looking for a structured list of results related to '{analysis['focus']}'.\n"
+                f"Please provide the results and ensure you include these details for each: {reqs}.\n"
+                f"If a detail is missing from the context, mark it as 'Not found'. Do not guess.\n\n"
+                f"Context:\n{final_context}\n\n"
+                f"Question: {user_query}"
+            )
+        else:
+            agent_prompt = (
+                f"Answer the following question based on the provided context. "
+                f"Be precise, objective, and well-structured.\n\n"
+                f"Context:\n{final_context}\n\n"
+                f"Question: {user_query}"
+            )
 
-    # Final Retrieval
-    bm25, tokenized_corpus, texts = await asyncio.to_thread(build_bm25_index, all_chunks)
-    relevant = await asyncio.to_thread(retrieve_bm25, user_query, bm25, tokenized_corpus, texts, 10)
-    final_context = "\n\n".join(relevant)
+        console.print("\n[bold green]Athena:[/bold green]")
+        response = await asyncio.to_thread(agent, agent_prompt, model.DEFAULT_MODEL)
+        console.print(Markdown(response))
 
-    # Tailor the agent prompt based on the intent
-    if analysis['type'] == 'structured':
-        reqs = ", ".join(analysis['requirements']) if analysis['requirements'] else "all available details"
-        agent_prompt = (
-            f"The user is looking for a structured list of results related to '{analysis['focus']}'.\n"
-            f"Please provide the results and ensure you include these details for each: {reqs}.\n"
-            f"If a detail is missing from the context, mark it as 'Not found'. Do not guess.\n\n"
-            f"Context:\n{final_context}\n\n"
-            f"Question: {user_query}"
-        )
-    else:
-        agent_prompt = (
-            f"Answer the following question based on the provided context. "
-            f"Be precise, objective, and well-structured.\n\n"
-            f"Context:\n{final_context}\n\n"
-            f"Question: {user_query}"
-        )
-
-    console.print("\n[bold green]Athena:[/bold green]")
-    response = await asyncio.to_thread(agent, agent_prompt, model.DEFAULT_MODEL)
-    console.print(Markdown(response))
-
-    console.print("\n[bold yellow]Sources:[/bold yellow]")
-    seen = set()
-    for i, url in enumerate(all_urls, 1):
-        if url not in seen:
-            console.print(f"{i}. {url}")
-            seen.add(url)
-        if len(seen) >= 5:
-            break
+        console.print("\n[bold yellow]Sources:[/bold yellow]")
+        seen = set()
+        for i, url in enumerate(all_urls, 1):
+            if url not in seen:
+                console.print(f"{i}. {url}")
+                seen.add(url)
+            if len(seen) >= 5:
+                break
 
 
 if __name__ == "__main__":
     load_history()
     try:
-        while True:
-            asyncio.run(main())
+        asyncio.run(main())
     except KeyboardInterrupt:
         console.print("\n[bold]Saving history...[/bold]")
         save_history()
